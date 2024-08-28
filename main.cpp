@@ -3,10 +3,8 @@
 #include <windows.h>
 #include <atomic>
 #include <iomanip>
-#include <optional>
 #include <condition_variable>
 #include <mutex>
-#include <format>
 #include <ctime>
 #include <chrono>
 #include <vector>
@@ -48,10 +46,34 @@ private:
 
 
     void sendKeyPress(char c) {
-        BYTE vk = static_cast<BYTE>(VkKeyScan(c));
+        SHORT vkCode = VkKeyScan(c);
+        BYTE vk = LOBYTE(vkCode);
+        BYTE modifiers = HIBYTE(vkCode);
+
+        if (modifiers & 1) {
+            keybd_event(VK_SHIFT, 0, 0, 0);
+        }
+        if (modifiers & 2) {
+            keybd_event(VK_CONTROL, 0, 0, 0);
+        }
+        if (modifiers & 4) {
+            keybd_event(VK_MENU, 0, 0, 0);
+        }
+
         keybd_event(vk, 0, 0, 0);
         keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
+
+        if (modifiers & 1) {
+            keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0);
+        }
+        if (modifiers & 2) {
+            keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+        }
+        if (modifiers & 4) {
+            keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+        }
     }
+
 
     void loadCommandsFromFile(const std::string& filename) {
         if (!std::filesystem::exists(filename)) {
@@ -97,6 +119,24 @@ private:
         return false;
     }
 
+    void displayRemainingTime(int total_seconds) {
+        auto start_time = std::chrono::steady_clock::now();
+
+        for (int i = 0; i < total_seconds; ++i) {
+            if (!running) {
+                std::cout << "\r" << std::string(50, ' ') << "\r";
+                return; 
+            }
+
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+
+            auto elapsed = std::chrono::steady_clock::now() - start_time;
+            int remaining = total_seconds - std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+
+            std::cout << "\r" << remaining << " Seconds remaining before next message" << std::flush;
+        }
+    }
+
     void sendMessage() {
         try {
             while (running && isBrowserFocused()) {
@@ -109,6 +149,12 @@ private:
                     }
 
                     sendKeyPress(VK_RETURN);
+
+                    auto start_time = std::chrono::steady_clock::now();
+
+					displayRemainingTime(messageInterval / 1000);
+
+                    if (!running) break;
 
                     std::cout << "Logger: " << getCurrentTime() << " - Sent: " << *currentMessage << std::endl;
 
@@ -130,7 +176,7 @@ private:
         while(true) {
             if((GetAsyncKeyState('W') & 0X8000 && GetAsyncKeyState('Q') & 0x8000) && running) {
                 running = false;
-                std::cout << "Inactive" << std::endl;
+                std::cout << "\nInactive" << std::endl;
                 cvar.notify_all();
                 if(messageThread.has_value() && messageThread->joinable()) {
                     messageThread->join();
@@ -139,7 +185,7 @@ private:
 
             if((GetAsyncKeyState(VK_MBUTTON) & 0x8000) && !running) {
                 running = true;
-                std::cout << "Active" << std::endl;
+                std::cout << "\nActive" << std::endl;
 
                 if(messageThread.has_value() && messageThread->joinable()) {
                     messageThread->join(); 
